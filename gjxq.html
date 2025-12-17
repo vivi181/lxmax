@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>国际象棋 - 智能战术教练版</title>
+    
+    <link href="https://cdn.bootcdn.net/ajax/libs/normalize/8.0.1/normalize.min.css" rel="stylesheet">
+    <link href="https://cdn.bootcdn.net/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css" rel="stylesheet">
+    <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-color: #f3f4f6;
+            --panel-bg: #ffffff;
+            --primary-color: #4f46e5;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: #1f2937;
+            height: 100vh;
+            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .navbar {
+            background: var(--panel-bg);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            padding: 0.5rem 1rem;
+            z-index: 10;
+            flex-shrink: 0;
+        }
+
+        .app-container {
+            flex: 1;
+            display: flex;
+            padding: 1rem;
+            gap: 1.5rem;
+            max-width: 1600px;
+            margin: 0 auto;
+            width: 100%;
+            overflow-y: auto;
+        }
+
+        .board-area {
+            flex: 2;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            position: relative; /* 为幽灵棋子定位 */
+        }
+
+        #myBoard {
+            width: 100%;
+            max-height: calc(100vh - 100px); 
+            max-width: calc(100vh - 100px);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+            border-radius: 4px;
+            /* overflow: hidden;  <-- 注意：为了让幽灵棋子能显示在边缘，这里最好不要 overflow hidden，或者幽灵棋子加到 body */
+        }
+
+        .controls-area {
+            flex: 1;
+            min-width: 320px;
+            max-width: 450px;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .info-card {
+            background: var(--panel-bg);
+            border-radius: 12px;
+            padding: 1.25rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            border: 1px solid #e5e7eb;
+        }
+
+        .status-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .eval-badge {
+            background: #eff6ff;
+            color: #1d4ed8;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+
+        .coach-panel {
+            background: linear-gradient(135deg, #fff 0%, #f0f9ff 100%);
+            border: 1px solid #bae6fd;
+            border-left: 5px solid #0ea5e9;
+            display: none;
+            animation: slideIn 0.3s ease-out;
+        }
+        .coach-panel.active { display: block; }
+        
+        .coach-move {
+            background: #fcd34d;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            color: #000;
+        }
+
+        /* === 新增样式：推演列表的可交互性 === */
+        .prediction-item {
+            padding: 6px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s;
+            border: 1px solid transparent;
+        }
+        .prediction-item:hover, .prediction-item.active-preview {
+            background-color: #e0f2fe;
+            border-color: #7dd3fc;
+        }
+        .prediction-item i.fa-arrow-right {
+            transition: transform 0.2s;
+        }
+        .prediction-item:hover i.fa-arrow-right {
+            transform: translateX(3px);
+            color: #0284c7 !important;
+        }
+
+        /* === 新增样式：幽灵棋子 === */
+        .ghost-piece {
+            position: absolute;
+            z-index: 1000;
+            opacity: 0.6;
+            pointer-events: none; /* 让鼠标事件穿透，不影响点击棋盘 */
+            will-change: top, left, opacity;
+        }
+
+        @media (max-width: 992px) {
+            .app-container {
+                flex-direction: column;
+                padding: 10px;
+                gap: 20px;
+            }
+            .board-area { flex: none; width: 100%; align-items: center; }
+            #myBoard { max-width: 100%; max-height: none; }
+            .controls-area { width: 100%; max-width: 100%; min-width: 0; }
+            .info-card { padding: 1rem; }
+        }
+
+        .highlight-hint { box-shadow: inset 0 0 3px 3px #fbbf24; }
+        .board-b72b1 img { max-width: 100%; }
+        
+        @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+
+<nav class="navbar">
+    <div class="container-fluid">
+        <span class="navbar-brand mb-0 h1 fw-bold"><i class="fas fa-chess-knight text-primary"></i> Chess Master</span>
+        <div class="d-flex align-items-center">
+            <small class="text-muted me-2 d-none d-sm-block">Powered by Stockfish</small>
+        </div>
+    </div>
+</nav>
+
+<div class="app-container">
+    
+    <div class="board-area">
+        <div id="myBoard"></div>
+        </div>
+
+    <div class="controls-area">
+        
+        <div class="info-card">
+            <div class="status-header mb-2">
+                <span class="text-muted small text-uppercase fw-bold">Current Turn</span>
+                <span class="text-muted small text-uppercase fw-bold">Evaluation</span>
+            </div>
+            <div class="status-header">
+                <h4 class="mb-0 fw-bold" id="status">准备开始</h4>
+                <div class="eval-badge" id="eval-score">0.0</div>
+            </div>
+        </div>
+
+        <div class="info-card">
+            <label class="form-label fw-bold small text-muted"><i class="fas fa-layer-group"></i> 游戏设置</label>
+            <div class="btn-group w-100 mb-3" role="group">
+                <input type="radio" class="btn-check" name="difficulty" id="diff-easy" value="0" checked>
+                <label class="btn btn-outline-primary" for="diff-easy">教学 (简单)</label>
+
+                <input type="radio" class="btn-check" name="difficulty" id="diff-medium" value="10">
+                <label class="btn btn-outline-primary" for="diff-medium">进阶</label>
+
+                <input type="radio" class="btn-check" name="difficulty" id="diff-hard" value="20">
+                <label class="btn btn-outline-primary" for="diff-hard">大师</label>
+            </div>
+
+            <div class="d-grid gap-2">
+                <button class="btn btn-primary fw-bold py-2" id="startBtn">新游戏</button>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-light border flex-grow-1" id="undoBtn"><i class="fas fa-undo"></i> 悔棋</button>
+                    <button class="btn btn-light border flex-grow-1" id="saveBtn"><i class="fas fa-save"></i> 保存</button>
+                    <button class="btn btn-light border flex-grow-1" id="loadBtn"><i class="fas fa-upload"></i> 读取</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="coach-panel" class="info-card coach-panel active">
+            <h5 class="mb-3" style="color: #0369a1;"><i class="fas fa-graduation-cap"></i> 战术教练</h5>
+            
+            <div id="coach-loading" class="text-center py-3 text-muted">
+                <div class="spinner-grow spinner-grow-sm text-primary" role="status"></div>
+                <span class="ms-2">AI正在分析局势...</span>
+            </div>
+
+            <div id="coach-detail" style="display:none;">
+                <div class="mb-3">
+                    <h6 class="fw-bold text-dark small text-uppercase">建议走法</h6>
+                    <div id="recommendation-text" class="fs-6" style="line-height: 1.6;"></div>
+                </div>
+                
+                <div class="p-2 bg-white rounded border">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="fw-bold text-muted small mb-0">后续推演 (悬浮查看动画)</h6>
+                        <i class="fas fa-play-circle text-primary opacity-50"></i>
+                    </div>
+                    <div id="prediction-text" class="small text-secondary d-flex flex-column gap-1"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="error-msg" class="alert alert-warning small mb-0" style="display:none;">
+            <i class="fas fa-wifi"></i> 离线模式：仅支持双人对战
+        </div>
+
+    </div>
+</div>
+
+<script src="https://cdn.bootcdn.net/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+<script src="https://cdn.bootcdn.net/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+<script src="https://cdn.bootcdn.net/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+
+<script>
+    var board = null;
+    var game = new Chess();
+    var stockfish = null;
+    var currentDifficulty = 0;
+    var isEngineFailed = false;
+    var ghostInterval = null; // 用于存储动画循环的定时器
+    
+    // 中文映射
+    const PIECE_NAMES = { 'p': '兵', 'n': '马', 'b': '象', 'r': '车', 'q': '后', 'k': '王' };
+    const PIECE_THEME_URL = 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png';
+
+    $(window).resize(function() {
+        if(board) board.resize();
+        stopGhostAnimation(); // 窗口大小时停止动画，防止错位
+    });
+
+    function initStockfish() {
+        const stockfishUrl = 'https://cdn.jsdelivr.net/npm/stockfish.js@10.0.0/stockfish.js';
+        fetch(stockfishUrl).then(res => { if(!res.ok) throw new Error(); return res.text(); })
+            .then(script => {
+                const blob = new Blob([script], { type: 'application/javascript' });
+                stockfish = new Worker(URL.createObjectURL(blob));
+                stockfish.onmessage = function(event) {
+                    var line = event.data;
+                    if(line.startsWith('bestmove')) {
+                        var bestMove = line.split(' ')[1];
+                        if(game.turn() === 'b' && !game.game_over()) {
+                            game.move({ from: bestMove.substring(0,2), to: bestMove.substring(2,4), promotion: 'q' });
+                            board.position(game.fen());
+                            updateStatus();
+                            if(currentDifficulty === 0) askCoach();
+                        }
+                    } else if (line.startsWith('info depth') && line.includes('pv') && game.turn() === 'w' && currentDifficulty === 0) {
+                         if(line.includes('depth 10')) analyzeThinking(line);
+                    }
+                };
+                stockfish.postMessage('uci');
+            })
+            .catch(err => {
+                isEngineFailed = true;
+                $('#error-msg').show();
+                $('#status').text('双人对战');
+            });
+    }
+
+    function analyzeThinking(line) {
+        let scoreMatch = line.match(/cp (-?\d+)/);
+        let score = scoreMatch ? parseInt(scoreMatch[1]) / 100 : 0;
+        if(game.turn() === 'b') score = -score; 
+        
+        let scoreColor = score > 0.5 ? '#16a34a' : (score < -0.5 ? '#dc2626' : '#2563eb');
+        $('#eval-score').text((score > 0 ? "+" : "") + score).css('color', scoreColor);
+
+        let pvMatch = line.split(' pv ')[1];
+        if (!pvMatch) return;
+        let moves = pvMatch.split(' ');
+        let bestMove = moves[0];
+        
+        $('.square-55d63').removeClass('highlight-hint');
+        let from = bestMove.substring(0, 2);
+        let to = bestMove.substring(2, 4);
+        $('.square-' + from).addClass('highlight-hint');
+        $('.square-' + to).addClass('highlight-hint');
+
+        generateCoachText(bestMove, moves.slice(1, 4), score);
+    }
+
+    function generateCoachText(bestMoveStr, futureMoves, score) {
+        let from = bestMoveStr.substring(0, 2);
+        let to = bestMoveStr.substring(2, 4);
+        let tempGame = new Chess(game.fen());
+        let moveDetails = tempGame.move({ from: from, to: to, promotion: 'q' });
+        if (!moveDetails) return;
+
+        let pieceName = PIECE_NAMES[moveDetails.piece];
+        let actionDesc = "";
+
+        if (moveDetails.captured) actionDesc = `<b>吃子战术</b>：用${pieceName}吃掉对方的${PIECE_NAMES[moveDetails.captured]}。`;
+        else if (moveDetails.san.includes('+')) actionDesc = `<b>将军！</b> 迫使对方应对。`;
+        else if (moveDetails.san.includes('O-O')) actionDesc = `<b>王车易位</b>：保护国王安全。`;
+        else {
+             if (['d4','d5','e4','e5'].includes(to)) actionDesc = `<b>抢占中心</b>：占据棋盘核心区域。`;
+             else if (moveDetails.piece === 'n') actionDesc = `<b>马踏中原</b>：增强控制范围。`;
+             else actionDesc = `<b>优化阵型</b>：调动${pieceName}。`;
+        }
+
+        let predictionHtml = "";
+        
+        // --- 修改开始：生成带有数据属性的列表项 ---
+        if(futureMoves.length > 0) {
+            futureMoves.forEach((m, i) => {
+                let mFrom = m.substring(0, 2);
+                let mTo = m.substring(2, 4);
+                
+                // 在临时棋盘上执行这步棋，以获取棋子类型
+                let mMove = tempGame.move({ from: mFrom, to: mTo, promotion: 'q' });
+                
+                if(mMove) {
+                    let who = (i % 2 === 0) ? "对方" : "你";
+                    let pName = PIECE_NAMES[mMove.piece];
+                    let act = mMove.captured ? `吃掉${PIECE_NAMES[mMove.captured]}` : `去${mTo}`;
+                    let pieceCode = mMove.color + mMove.piece.toUpperCase(); // e.g., 'wN', 'bP'
+
+                    // 添加 data- 属性供 JS 读取
+                    predictionHtml += `
+                        <div class="prediction-item" 
+                             data-from="${mFrom}" 
+                             data-to="${mTo}" 
+                             data-piece="${pieceCode}">
+                            <i class="fas fa-arrow-right text-muted small me-2"></i> 
+                            ${who}<b>${pName}</b>${act}
+                        </div>`;
+                }
+            });
+        }
+        // --- 修改结束 ---
+
+        $('#coach-loading').hide();
+        $('#coach-detail').show();
+        $('#recommendation-text').html(`<span class="coach-move">${from}→${to}</span> ${actionDesc}`);
+        $('#prediction-text').html(predictionHtml);
+    }
+
+    // === 新增功能：处理幽灵棋子动画 ===
+
+    // 1. 绑定事件：鼠标移入/点击时触发
+    $(document).on('mouseenter click', '.prediction-item', function() {
+        // 高亮当前行
+        $('.prediction-item').removeClass('active-preview');
+        $(this).addClass('active-preview');
+
+        // 获取数据
+        const from = $(this).data('from');
+        const to = $(this).data('to');
+        const pieceCode = $(this).data('piece');
+
+        // 开始动画
+        runGhostAnimation(from, to, pieceCode);
+    });
+
+    // 2. 绑定事件：鼠标移出时停止
+    $(document).on('mouseleave', '.prediction-item', function() {
+        $(this).removeClass('active-preview');
+        stopGhostAnimation();
+    });
+
+    // 为了移动端体验，点击棋盘任何地方也清除动画
+    $(document).on('touchstart click', '#myBoard', function() {
+        stopGhostAnimation();
+    });
+
+    function runGhostAnimation(fromSquare, toSquare, pieceCode) {
+        stopGhostAnimation(); // 先清除旧的
+
+        const $board = $('#myBoard');
+        const boardOffset = $board.offset();
+        
+        // 找到起点和终点的DOM元素
+        const $fromSq = $board.find('.square-' + fromSquare);
+        const $toSq = $board.find('.square-' + toSquare);
+        
+        if ($fromSq.length === 0 || $toSq.length === 0) return;
+
+        // 计算相对坐标 (相对于 board-area)
+        // 注意：我们需要相对于 board-area 定位，因为 board-area 是 relative
+        const areaOffset = $('.board-area').offset();
+        
+        const fromPos = {
+            top: $fromSq.offset().top - areaOffset.top,
+            left: $fromSq.offset().left - areaOffset.left,
+            width: $fromSq.width()
+        };
+
+        const toPos = {
+            top: $toSq.offset().top - areaOffset.top,
+            left: $toSq.offset().left - areaOffset.left
+        };
+
+        // 创建幽灵棋子
+        const pieceUrl = PIECE_THEME_URL.replace('{piece}', pieceCode);
+        const $ghost = $(`<img src="${pieceUrl}" class="ghost-piece">`);
+        
+        $ghost.css({
+            width: fromPos.width,
+            height: fromPos.width, // 正方形
+            top: fromPos.top,
+            left: fromPos.left
+        });
+
+        $('.board-area').append($ghost);
+
+        // 动画函数
+        const animate = () => {
+            $ghost.css({ top: fromPos.top, left: fromPos.left, opacity: 0.6 }); // 重置位置
+            
+            $ghost.animate({
+                top: toPos.top,
+                left: toPos.left,
+                opacity: 0.8
+            }, 800, 'swing', function() {
+                // 动画结束回调
+                $ghost.animate({ opacity: 0 }, 200, function(){
+                    // 渐隐完成后，等待一小会再循环
+                    setTimeout(() => {
+                        if($ghost.parent().length > 0) animate(); 
+                    }, 100);
+                });
+            });
+        };
+
+        animate(); // 启动第一次
+        
+        // 存储当前幽灵元素以便清除
+        window.currentGhost = $ghost;
+    }
+
+    function stopGhostAnimation() {
+        if (window.currentGhost) {
+            window.currentGhost.stop(true, true); // 停止动画
+            window.currentGhost.remove(); // 移除元素
+            window.currentGhost = null;
+        }
+        $('.prediction-item').removeClass('active-preview');
+    }
+    // === 幽灵棋子逻辑结束 ===
+
+
+    function askCoach() {
+        if (!stockfish || isEngineFailed) return;
+        $('#coach-loading').show();
+        $('#coach-detail').hide();
+        stopGhostAnimation(); // 请求新建议时清除动画
+        stockfish.postMessage('position fen ' + game.fen());
+        stockfish.postMessage('go depth 12'); 
+    }
+
+    function onDragStart (source, piece) {
+        if (game.game_over()) return false;
+        if (!isEngineFailed && piece.search(/^b/) !== -1) return false;
+        stopGhostAnimation(); // 拖动时停止演示
+    }
+
+    function onDrop (source, target) {
+        stopGhostAnimation();
+        var move = game.move({ from: source, to: target, promotion: 'q' });
+        if (move === null) return 'snapback';
+        updateStatus();
+        $('.square-55d63').removeClass('highlight-hint');
+
+        if (!isEngineFailed && !game.game_over() && game.turn() === 'b') {
+            window.setTimeout(() => {
+                var depth = (currentDifficulty === 0) ? 4 : (currentDifficulty === 10 ? 12 : 18);
+                var skill = (currentDifficulty === 0) ? 0 : (currentDifficulty === 10 ? 10 : 20);
+                stockfish.postMessage('setoption name Skill Level value ' + skill);
+                stockfish.postMessage('position fen ' + game.fen());
+                stockfish.postMessage('go depth ' + depth);
+            }, 250);
+        }
+    }
+
+    function updateStatus () {
+        var moveColor = (game.turn() === 'b') ? '黑方 (AI)' : '白方 (你)';
+        if (game.in_checkmate()) $('#status').text('将死 - ' + moveColor + '输了');
+        else if (game.in_draw()) $('#status').text('和棋');
+        else {
+            $('#status').text(moveColor + (game.in_check() ? ' (被将军)' : ' 走棋'));
+        }
+        
+        if (!isEngineFailed && currentDifficulty === 0 && game.turn() === 'w' && !game.game_over()) {
+            $('#coach-panel').show();
+            askCoach();
+        } else {
+            if(currentDifficulty !== 0) $('#coach-panel').hide();
+        }
+    }
+
+    $('#startBtn').click(() => { game.reset(); board.position('start'); updateStatus(); $('.square-55d63').removeClass('highlight-hint'); stopGhostAnimation(); });
+    $('#undoBtn').click(() => { game.undo(); if(!isEngineFailed) game.undo(); board.position(game.fen()); updateStatus(); askCoach(); });
+    $('#saveBtn').click(() => { localStorage.setItem('chess_v5', game.fen()); alert('已保存'); });
+    $('#loadBtn').click(() => { if(localStorage.getItem('chess_v5')) { game.load(localStorage.getItem('chess_v5')); board.position(game.fen()); updateStatus(); } });
+    $('input[name="difficulty"]').change(function() {
+        currentDifficulty = parseInt($(this).val());
+        stopGhostAnimation();
+        if(currentDifficulty === 0) { $('#coach-panel').addClass('active').show(); if(game.turn() === 'w') askCoach(); } 
+        else { $('#coach-panel').removeClass('active').hide(); $('.square-55d63').removeClass('highlight-hint'); }
+    });
+
+    $(document).ready(function() {
+        board = Chessboard('myBoard', {
+            draggable: true,
+            position: 'start',
+            onDragStart: onDragStart,
+            onDrop: onDrop,
+            onSnapEnd: () => board.position(game.fen()),
+            pieceTheme: PIECE_THEME_URL
+        });
+        
+        $('#myBoard').on('touchmove', function(e) { e.preventDefault(); });
+        
+        initStockfish();
+        updateStatus();
+    });
+</script>
+</body>
+</html>
