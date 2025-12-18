@@ -100,6 +100,8 @@
             max-width: 85%; max-height: 85%;
             box-shadow: 0 0 50px rgba(212, 175, 55, 0.4); border: 2px solid var(--color-gold);
             object-fit: contain; transform: scale(0.95); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            /* 增加一点过渡效果，让切图时不那么生硬 */
+            transition: opacity 0.15s ease, transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
         }
         #lightbox.active img { transform: scale(1); }
 
@@ -476,19 +478,69 @@
                 this.isDragging = false; this.previousPointer = { x: 0, y: 0 }; this.dragDelta = 0;
                 this.touchStartDistance = 0; this.cameraStartDistance = 0;
 
+                // Lightbox specific logic
+                this.lightboxEl = document.getElementById('lightbox');
+                this.lightboxImg = document.getElementById('lightbox-img');
+                this.currentPhotoIndex = 1; 
+                this.touchStartX = 0;
+                this.touchEndX = 0;
+
                 document.addEventListener('pointerdown', this.onPointerDown.bind(this));
                 document.addEventListener('pointermove', this.onPointerMove.bind(this));
                 document.addEventListener('pointerup', this.onPointerUp.bind(this));
                 document.addEventListener('touchstart', this.onTouchStart.bind(this), {passive: false});
                 document.addEventListener('touchmove', this.onTouchMove.bind(this), {passive: false});
-                document.getElementById('lightbox').addEventListener('click', () => { this.closeLightbox(); });
+
+                // 触摸开始（用于左右滑动）
+                this.lightboxEl.addEventListener('touchstart', (e) => {
+                    this.touchStartX = e.changedTouches[0].screenX;
+                }, {passive: true});
+
+                // 触摸结束（用于左右滑动）
+                this.lightboxEl.addEventListener('touchend', (e) => {
+                    this.touchEndX = e.changedTouches[0].screenX;
+                    this.handleSwipe();
+                }, {passive: true});
+
+                // 点击关闭（增加防止滑动误触逻辑）
+                this.lightboxEl.addEventListener('click', (e) => {
+                    if (Math.abs(this.touchEndX - this.touchStartX) > 40) return; // 如果滑动距离大，认为是切图，不关闭
+                    this.closeLightbox(); 
+                });
                 
-                // 处理“点击查收礼物”
                 document.getElementById('start-screen').addEventListener('click', () => {
                    this.startGame();
                 });
             }
             
+            handleSwipe() {
+                const diff = this.touchEndX - this.touchStartX;
+                const threshold = 50; 
+                if (Math.abs(diff) < threshold) return; 
+
+                if (diff > 0) {
+                    this.navigateLightbox(-1); // 向右滑，上一张
+                } else {
+                    this.navigateLightbox(1);  // 向左滑，下一张
+                }
+            }
+
+            navigateLightbox(dir) {
+                const settings = CONFIG.imageSettings;
+                let newIndex = this.currentPhotoIndex + dir;
+
+                if (newIndex > settings.totalImages) newIndex = settings.start;
+                if (newIndex < settings.start) newIndex = settings.totalImages;
+
+                this.currentPhotoIndex = newIndex;
+                const newSrc = `${settings.folder}${settings.prefix}${newIndex}${settings.extension}`;
+                
+                // 简单的淡入效果
+                this.lightboxImg.style.opacity = 0.5;
+                this.lightboxImg.src = newSrc;
+                setTimeout(() => { this.lightboxImg.style.opacity = 1; }, 150);
+            }
+
             startGame() {
                 if(STATE.hasStarted) return;
                 STATE.hasStarted = true;
@@ -503,7 +555,20 @@
             }
 
             openLightbox(imgSrc) {
-                if(imgSrc) { document.getElementById('lightbox-img').src = imgSrc; document.getElementById('lightbox').classList.add('active'); document.getElementById('ui-container').style.opacity = 0; STATE.isLightboxOpen = true; }
+                if(imgSrc) {
+                    // 解析当前图片 index
+                    const match = imgSrc.match(/img_(\d+)/);
+                    if (match) {
+                        this.currentPhotoIndex = parseInt(match[1]);
+                    }
+                    this.lightboxImg.src = imgSrc;
+                    this.lightboxEl.classList.add('active');
+                    document.getElementById('ui-container').style.opacity = 0;
+                    STATE.isLightboxOpen = true;
+                    // 重置坐标
+                    this.touchStartX = 0;
+                    this.touchEndX = 0;
+                }
             }
             closeLightbox() {
                 document.getElementById('lightbox').classList.remove('active'); document.getElementById('ui-container').style.opacity = 1; STATE.isLightboxOpen = false;
